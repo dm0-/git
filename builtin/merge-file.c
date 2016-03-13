@@ -5,7 +5,7 @@
 #include "parse-options.h"
 
 static const char *const merge_file_usage[] = {
-	N_("git merge-file [options] [-L name1 [-L orig [-L name2]]] file1 orig_file file2"),
+	N_("git merge-file [<options>] [-L <name1> [-L <orig> [-L <name2>]]] <file1> <orig-file> <file2>"),
 	NULL
 };
 
@@ -42,7 +42,7 @@ int cmd_merge_file(int argc, const char **argv, const char *prefix)
 			    N_("for conflicts, use this marker size")),
 		OPT__QUIET(&quiet, N_("do not warn about conflicts")),
 		OPT_CALLBACK('L', NULL, names, N_("name"),
-			     N_("set labels for file1/orig_file/file2"), &label_cb),
+			     N_("set labels for file1/orig-file/file2"), &label_cb),
 		OPT_END(),
 	};
 
@@ -75,7 +75,8 @@ int cmd_merge_file(int argc, const char **argv, const char *prefix)
 			names[i] = argv[i];
 		if (read_mmfile(mmfs + i, fname))
 			return -1;
-		if (buffer_is_binary(mmfs[i].ptr, mmfs[i].size))
+		if (mmfs[i].size > MAX_XDIFF_SIZE ||
+		    buffer_is_binary(mmfs[i].ptr, mmfs[i].size))
 			return error("Cannot merge binary files: %s",
 					argv[i]);
 	}
@@ -90,7 +91,8 @@ int cmd_merge_file(int argc, const char **argv, const char *prefix)
 
 	if (ret >= 0) {
 		const char *filename = argv[0];
-		FILE *f = to_stdout ? stdout : fopen(filename, "wb");
+		const char *fpath = prefix_filename(prefix, prefixlen, argv[0]);
+		FILE *f = to_stdout ? stdout : fopen(fpath, "wb");
 
 		if (!f)
 			ret = error("Could not open %s for writing", filename);
@@ -101,6 +103,9 @@ int cmd_merge_file(int argc, const char **argv, const char *prefix)
 			ret = error("Could not close %s", filename);
 		free(result.ptr);
 	}
+
+	if (ret > 127)
+		ret = 127;
 
 	return ret;
 }

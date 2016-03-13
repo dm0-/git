@@ -34,8 +34,16 @@ typedef void *SSL;
 #include "http.h"
 #endif
 
+#if defined(USE_CURL_FOR_IMAP_SEND) && defined(NO_OPENSSL)
+/* only available option */
+#define USE_CURL_DEFAULT 1
+#else
+/* strictly opt in */
+#define USE_CURL_DEFAULT 0
+#endif
+
 static int verbosity;
-static int use_curl; /* strictly opt in */
+static int use_curl = USE_CURL_DEFAULT;
 
 static const char * const imap_send_usage[] = { "git imap-send [-v] [-q] [--[no-]curl] < <mbox>", NULL };
 
@@ -881,16 +889,14 @@ static char *cram(const char *challenge_64, const char *user, const char *pass)
 	}
 
 	/* response: "<user> <digest in hex>" */
-	resp_len = strlen(user) + 1 + strlen(hex) + 1;
-	response = xmalloc(resp_len);
-	sprintf(response, "%s %s", user, hex);
+	response = xstrfmt("%s %s", user, hex);
+	resp_len = strlen(response) + 1;
 
-	response_64 = xmalloc(ENCODED_SIZE(resp_len) + 1);
+	response_64 = xmallocz(ENCODED_SIZE(resp_len));
 	encoded_len = EVP_EncodeBlock((unsigned char *)response_64,
 				      (unsigned char *)response, resp_len);
 	if (encoded_len < 0)
 		die("EVP_EncodeBlock error");
-	response_64[encoded_len] = '\0';
 	return (char *)response_64;
 }
 
@@ -1181,7 +1187,7 @@ static void lf_to_crlf(struct strbuf *msg)
 		j++;
 	}
 
-	new = xmalloc(j + 1);
+	new = xmallocz(j);
 
 	/*
 	 * Second pass: write the new string.  Note that this loop is
@@ -1414,11 +1420,15 @@ static CURL *setup_curl(struct imap_server_conf *srvc)
 	curl_easy_setopt(curl, CURLOPT_PORT, server.port);
 
 	if (server.auth_method) {
+#if LIBCURL_VERSION_NUM < 0x072200
+		warning("No LOGIN_OPTIONS support in this cURL version");
+#else
 		struct strbuf auth = STRBUF_INIT;
 		strbuf_addstr(&auth, "AUTH=");
 		strbuf_addstr(&auth, server.auth_method);
 		curl_easy_setopt(curl, CURLOPT_LOGIN_OPTIONS, auth.buf);
 		strbuf_release(&auth);
+#endif
 	}
 
 	if (!server.use_ssl)
@@ -1504,8 +1514,13 @@ int main(int argc, char **argv)
 
 #ifndef USE_CURL_FOR_IMAP_SEND
 	if (use_curl) {
-		warning("--use-curl not supported in this build");
+		warning("--curl not supported in this build");
 		use_curl = 0;
+	}
+#elif defined(NO_OPENSSL)
+	if (!use_curl) {
+		warning("--no-curl not supported in this build");
+		use_curl = 1;
 	}
 #endif
 

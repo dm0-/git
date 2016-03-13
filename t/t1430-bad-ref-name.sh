@@ -38,18 +38,20 @@ test_expect_success 'fast-import: fail on invalid branch name "bad[branch]name"'
 	test_must_fail git fast-import <input
 '
 
-test_expect_success 'git branch shows badly named ref' '
+test_expect_success 'git branch shows badly named ref as warning' '
 	cp .git/refs/heads/master .git/refs/heads/broken...ref &&
 	test_when_finished "rm -f .git/refs/heads/broken...ref" &&
-	git branch >output &&
-	grep -e "broken\.\.\.ref" output
+	git branch >output 2>error &&
+	grep -e "broken\.\.\.ref" error &&
+	! grep -e "broken\.\.\.ref" output
 '
 
 test_expect_success 'branch -d can delete badly named ref' '
 	cp .git/refs/heads/master .git/refs/heads/broken...ref &&
 	test_when_finished "rm -f .git/refs/heads/broken...ref" &&
 	git branch -d broken...ref &&
-	git branch >output &&
+	git branch >output 2>error &&
+	! grep -e "broken\.\.\.ref" error &&
 	! grep -e "broken\.\.\.ref" output
 '
 
@@ -57,7 +59,8 @@ test_expect_success 'branch -D can delete badly named ref' '
 	cp .git/refs/heads/master .git/refs/heads/broken...ref &&
 	test_when_finished "rm -f .git/refs/heads/broken...ref" &&
 	git branch -D broken...ref &&
-	git branch >output &&
+	git branch >output 2>error &&
+	! grep -e "broken\.\.\.ref" error &&
 	! grep -e "broken\.\.\.ref" output
 '
 
@@ -65,6 +68,14 @@ test_expect_success 'branch -D cannot delete non-ref in .git dir' '
 	echo precious >.git/my-private-file &&
 	echo precious >expect &&
 	test_must_fail git branch -D ../../my-private-file &&
+	test_cmp expect .git/my-private-file
+'
+
+test_expect_success 'branch -D cannot delete ref in .git dir' '
+	git rev-parse HEAD >.git/my-private-file &&
+	git rev-parse HEAD >expect &&
+	git branch foo/legit &&
+	test_must_fail git branch -D foo////./././../../../my-private-file &&
 	test_cmp expect .git/my-private-file
 '
 
@@ -77,7 +88,8 @@ test_expect_success 'branch -D cannot delete absolute path' '
 test_expect_success 'git branch cannot create a badly named ref' '
 	test_when_finished "rm -f .git/refs/heads/broken...ref" &&
 	test_must_fail git branch broken...ref &&
-	git branch >output &&
+	git branch >output 2>error &&
+	! grep -e "broken\.\.\.ref" error &&
 	! grep -e "broken\.\.\.ref" output
 '
 
@@ -87,7 +99,8 @@ test_expect_success 'branch -m cannot rename to a bad ref name' '
 	git branch goodref &&
 	test_must_fail git branch -m goodref broken...ref &&
 	test_cmp_rev master goodref &&
-	git branch >output &&
+	git branch >output 2>error &&
+	! grep -e "broken\.\.\.ref" error &&
 	! grep -e "broken\.\.\.ref" output
 '
 
@@ -96,14 +109,16 @@ test_expect_failure 'branch -m can rename from a bad ref name' '
 	test_when_finished "rm -f .git/refs/heads/broken...ref" &&
 	git branch -m broken...ref renamed &&
 	test_cmp_rev master renamed &&
-	git branch >output &&
+	git branch >output 2>error &&
+	! grep -e "broken\.\.\.ref" error &&
 	! grep -e "broken\.\.\.ref" output
 '
 
 test_expect_success 'push cannot create a badly named ref' '
 	test_when_finished "rm -f .git/refs/heads/broken...ref" &&
 	test_must_fail git push "file://$(pwd)" HEAD:refs/heads/broken...ref &&
-	git branch >output &&
+	git branch >output 2>error &&
+	! grep -e "broken\.\.\.ref" error &&
 	! grep -e "broken\.\.\.ref" output
 '
 
@@ -123,7 +138,8 @@ test_expect_failure 'push --mirror can delete badly named ref' '
 		cp .git/refs/heads/master .git/refs/heads/broken...ref
 	) &&
 	git -C src push --mirror "file://$top/dest" &&
-	git -C dest branch >output &&
+	git -C dest branch >output 2>error &&
+	! grep -e "broken\.\.\.ref" error &&
 	! grep -e "broken\.\.\.ref" output
 '
 
@@ -151,7 +167,8 @@ test_expect_success 'update-ref -d can delete broken name' '
 	cp .git/refs/heads/master .git/refs/heads/broken...ref &&
 	test_when_finished "rm -f .git/refs/heads/broken...ref" &&
 	git update-ref -d refs/heads/broken...ref &&
-	git branch >output &&
+	git branch >output 2>error &&
+	! grep -e "broken\.\.\.ref" error &&
 	! grep -e "broken\.\.\.ref" output
 '
 

@@ -14,8 +14,8 @@ submodule and "git submodule update --rebase/--merge" does not detach the HEAD.
 
 compare_head()
 {
-    sha_master=`git rev-list --max-count=1 master`
-    sha_head=`git rev-list --max-count=1 HEAD`
+    sha_master=$(git rev-list --max-count=1 master)
+    sha_head=$(git rev-list --max-count=1 HEAD)
 
     test "$sha_master" = "$sha_head"
 }
@@ -754,7 +754,7 @@ test_expect_success SYMLINKS 'submodule update can handle symbolic links in pwd'
 
 test_expect_success 'submodule update clone shallow submodule' '
 	git clone cloned super3 &&
-	pwd=$(pwd)
+	pwd=$(pwd) &&
 	(cd super3 &&
 	 sed -e "s#url = ../#url = file://$pwd/#" <.gitmodules >.gitmodules.tmp &&
 	 mv -f .gitmodules.tmp .gitmodules &&

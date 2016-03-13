@@ -57,6 +57,14 @@ test_expect_success "format-patch --ignore-if-in-upstream" '
 
 '
 
+test_expect_success "format-patch --ignore-if-in-upstream handles tags" '
+	git tag -a v1 -m tag side &&
+	git tag -a v2 -m tag master &&
+	git format-patch --stdout --ignore-if-in-upstream v2..v1 >patch1 &&
+	cnt=$(grep "^From " patch1 | wc -l) &&
+	test $cnt = 2
+'
+
 test_expect_success "format-patch doesn't consider merge commits" '
 
 	git checkout -b slave master &&
@@ -802,7 +810,7 @@ test_expect_success '--no-signature suppresses format.signaturefile ' '
 '
 
 test_expect_success '--signature-file overrides format.signaturefile' '
-	cat >other-mail-signature <<-\EOF
+	cat >other-mail-signature <<-\EOF &&
 	Use this other signature instead of mail-signature.
 	EOF
 	test_config format.signaturefile mail-signature &&
@@ -1421,6 +1429,35 @@ test_expect_success 'cover letter auto user override' '
 	test_line_count = 1 list &&
 	git format-patch -o tmp --no-cover-letter -2 >list &&
 	test_line_count = 2 list
+'
+
+test_expect_success 'format-patch --zero-commit' '
+	git format-patch --zero-commit --stdout v2..v1 >patch2 &&
+	grep "^From " patch2 | sort | uniq >actual &&
+	echo "From $_z40 Mon Sep 17 00:00:00 2001" >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'From line has expected format' '
+	git format-patch --stdout v2..v1 >patch2 &&
+	grep "^From " patch2 >from &&
+	grep "^From $_x40 Mon Sep 17 00:00:00 2001$" patch2 >filtered &&
+	test_cmp from filtered
+'
+
+test_expect_success 'format-patch format.outputDirectory option' '
+	test_config format.outputDirectory patches &&
+	rm -fr patches &&
+	git format-patch master..side &&
+	test $(git rev-list master..side | wc -l) -eq $(ls patches | wc -l)
+'
+
+test_expect_success 'format-patch -o overrides format.outputDirectory' '
+	test_config format.outputDirectory patches &&
+	rm -fr patches patchset &&
+	git format-patch master..side -o patchset &&
+	test_path_is_missing patches &&
+	test_path_is_dir patchset
 '
 
 test_done

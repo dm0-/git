@@ -950,7 +950,7 @@ test_expect_success 'rebase --edit-todo can be used to modify todo' '
 	set_fake_editor &&
 	FAKE_LINES="edit 1 2 3" git rebase -i HEAD~3 &&
 	FAKE_LINES="2 1" git rebase --edit-todo &&
-	git rebase --continue
+	git rebase --continue &&
 	test M = $(git cat-file commit HEAD^ | sed -ne \$p) &&
 	test L = $(git cat-file commit HEAD | sed -ne \$p)
 '
@@ -961,13 +961,13 @@ test_expect_success 'rebase -i produces readable reflog' '
 	set_fake_editor &&
 	git rebase -i --onto I F branch-reflog-test &&
 	cat >expect <<-\EOF &&
-	rebase -i (start): checkout I
-	rebase -i (pick): G
-	rebase -i (pick): H
 	rebase -i (finish): returning to refs/heads/branch-reflog-test
+	rebase -i (pick): H
+	rebase -i (pick): G
+	rebase -i (start): checkout I
 	EOF
-	tail -n 4 .git/logs/HEAD |
-	sed -e "s/.*	//" >actual &&
+	git reflog -n4 HEAD |
+	sed "s/[^:]*: //" >actual &&
 	test_cmp expect actual
 '
 
@@ -1006,8 +1006,24 @@ test_expect_success 'rebase -i with --strategy and -X' '
 	test $(cat file1) = Z
 '
 
+test_expect_success 'interrupted rebase -i with --strategy and -X' '
+	git checkout -b conflict-merge-use-theirs-interrupted conflict-branch &&
+	git reset --hard HEAD^ &&
+	>breakpoint &&
+	git add breakpoint &&
+	git commit -m "breakpoint for interactive mode" &&
+	echo five >conflict &&
+	echo Z >file1 &&
+	git commit -a -m "one file conflict" &&
+	set_fake_editor &&
+	FAKE_LINES="edit 1 2" git rebase -i --strategy=recursive -Xours conflict-branch &&
+	git rebase --continue &&
+	test $(git show conflict-branch:conflict) = $(cat conflict) &&
+	test $(cat file1) = Z
+'
+
 test_expect_success 'rebase -i error on commits with \ in message' '
-	current_head=$(git rev-parse HEAD)
+	current_head=$(git rev-parse HEAD) &&
 	test_when_finished "git rebase --abort; git reset --hard $current_head; rm -f error" &&
 	test_commit TO-REMOVE will-conflict old-content &&
 	test_commit "\temp" will-conflict new-content dummy &&
@@ -1036,6 +1052,240 @@ test_expect_success 'short SHA-1 collide' '
 	set_fake_editor &&
 	FAKE_COMMIT_MESSAGE="collide2 ac4f2ee" \
 	FAKE_LINES="reword 1 2" git rebase -i HEAD~2
+	)
+'
+
+test_expect_success 'respect core.abbrev' '
+	git config core.abbrev 12 &&
+	set_cat_todo_editor &&
+	test_must_fail git rebase -i HEAD~4 >todo-list &&
+	test 4 = $(grep -c "pick [0-9a-f]\{12,\}" todo-list)
+'
+
+test_expect_success 'todo count' '
+	write_script dump-raw.sh <<-\EOF &&
+		cat "$1"
+	EOF
+	test_set_editor "$(pwd)/dump-raw.sh" &&
+	git rebase -i HEAD~4 >actual &&
+	grep "^# Rebase ..* onto ..* ([0-9]" actual
+'
+
+test_expect_success 'rebase -i commits that overwrite untracked files (pick)' '
+	git checkout --force branch2 &&
+	git clean -f &&
+	set_fake_editor &&
+	FAKE_LINES="edit 1 2" git rebase -i A &&
+	test_cmp_rev HEAD F &&
+	test_path_is_missing file6 &&
+	>file6 &&
+	test_must_fail git rebase --continue &&
+	test_cmp_rev HEAD F &&
+	rm file6 &&
+	git rebase --continue &&
+	test_cmp_rev HEAD I
+'
+
+test_expect_success 'rebase -i commits that overwrite untracked files (squash)' '
+	git checkout --force branch2 &&
+	git clean -f &&
+	git tag original-branch2 &&
+	set_fake_editor &&
+	FAKE_LINES="edit 1 squash 2" git rebase -i A &&
+	test_cmp_rev HEAD F &&
+	test_path_is_missing file6 &&
+	>file6 &&
+	test_must_fail git rebase --continue &&
+	test_cmp_rev HEAD F &&
+	rm file6 &&
+	git rebase --continue &&
+	test $(git cat-file commit HEAD | sed -ne \$p) = I &&
+	git reset --hard original-branch2
+'
+
+test_expect_success 'rebase -i commits that overwrite untracked files (no ff)' '
+	git checkout --force branch2 &&
+	git clean -f &&
+	set_fake_editor &&
+	FAKE_LINES="edit 1 2" git rebase -i --no-ff A &&
+	test $(git cat-file commit HEAD | sed -ne \$p) = F &&
+	test_path_is_missing file6 &&
+	>file6 &&
+	test_must_fail git rebase --continue &&
+	test $(git cat-file commit HEAD | sed -ne \$p) = F &&
+	rm file6 &&
+	git rebase --continue &&
+	test $(git cat-file commit HEAD | sed -ne \$p) = I
+'
+
+test_expect_success 'rebase --continue removes CHERRY_PICK_HEAD' '
+	git checkout -b commit-to-skip &&
+	for double in X 3 1
+	do
+		test_seq 5 | sed "s/$double/&&/" >seq &&
+		git add seq &&
+		test_tick &&
+		git commit -m seq-$double
+	done &&
+	git tag seq-onto &&
+	git reset --hard HEAD~2 &&
+	git cherry-pick seq-onto &&
+	set_fake_editor &&
+	test_must_fail env FAKE_LINES= git rebase -i seq-onto &&
+	test -d .git/rebase-merge &&
+	git rebase --continue &&
+	git diff --exit-code seq-onto &&
+	test ! -d .git/rebase-merge &&
+	test ! -f .git/CHERRY_PICK_HEAD
+'
+
+rebase_setup_and_clean () {
+	test_when_finished "
+		git checkout master &&
+		test_might_fail git branch -D $1 &&
+		test_might_fail git rebase --abort
+	" &&
+	git checkout -b $1 master
+}
+
+test_expect_success 'drop' '
+	rebase_setup_and_clean drop-test &&
+	set_fake_editor &&
+	FAKE_LINES="1 drop 2 3 drop 4 5" git rebase -i --root &&
+	test E = $(git cat-file commit HEAD | sed -ne \$p) &&
+	test C = $(git cat-file commit HEAD^ | sed -ne \$p) &&
+	test A = $(git cat-file commit HEAD^^ | sed -ne \$p)
+'
+
+cat >expect <<EOF
+Successfully rebased and updated refs/heads/missing-commit.
+EOF
+
+test_expect_success 'rebase -i respects rebase.missingCommitsCheck = ignore' '
+	test_config rebase.missingCommitsCheck ignore &&
+	rebase_setup_and_clean missing-commit &&
+	set_fake_editor &&
+	FAKE_LINES="1 2 3 4" \
+		git rebase -i --root 2>actual &&
+	test D = $(git cat-file commit HEAD | sed -ne \$p) &&
+	test_cmp expect actual
+'
+
+cat >expect <<EOF
+Warning: some commits may have been dropped accidentally.
+Dropped commits (newer to older):
+ - $(git rev-list --pretty=oneline --abbrev-commit -1 master)
+To avoid this message, use "drop" to explicitly remove a commit.
+
+Use 'git config rebase.missingCommitsCheck' to change the level of warnings.
+The possible behaviours are: ignore, warn, error.
+
+Successfully rebased and updated refs/heads/missing-commit.
+EOF
+
+test_expect_success 'rebase -i respects rebase.missingCommitsCheck = warn' '
+	test_config rebase.missingCommitsCheck warn &&
+	rebase_setup_and_clean missing-commit &&
+	set_fake_editor &&
+	FAKE_LINES="1 2 3 4" \
+		git rebase -i --root 2>actual &&
+	test_cmp expect actual &&
+	test D = $(git cat-file commit HEAD | sed -ne \$p)
+'
+
+cat >expect <<EOF
+Warning: some commits may have been dropped accidentally.
+Dropped commits (newer to older):
+ - $(git rev-list --pretty=oneline --abbrev-commit -1 master)
+ - $(git rev-list --pretty=oneline --abbrev-commit -1 master~2)
+To avoid this message, use "drop" to explicitly remove a commit.
+
+Use 'git config rebase.missingCommitsCheck' to change the level of warnings.
+The possible behaviours are: ignore, warn, error.
+
+You can fix this with 'git rebase --edit-todo'.
+Or you can abort the rebase with 'git rebase --abort'.
+EOF
+
+test_expect_success 'rebase -i respects rebase.missingCommitsCheck = error' '
+	test_config rebase.missingCommitsCheck error &&
+	rebase_setup_and_clean missing-commit &&
+	set_fake_editor &&
+	test_must_fail env FAKE_LINES="1 2 4" \
+		git rebase -i --root 2>actual &&
+	test_cmp expect actual &&
+	cp .git/rebase-merge/git-rebase-todo.backup \
+		.git/rebase-merge/git-rebase-todo &&
+	FAKE_LINES="1 2 drop 3 4 drop 5" \
+		git rebase --edit-todo &&
+	git rebase --continue &&
+	test D = $(git cat-file commit HEAD | sed -ne \$p) &&
+	test B = $(git cat-file commit HEAD^ | sed -ne \$p)
+'
+
+cat >expect <<EOF
+Warning: the command isn't recognized in the following line:
+ - badcmd $(git rev-list --oneline -1 master~1)
+
+You can fix this with 'git rebase --edit-todo'.
+Or you can abort the rebase with 'git rebase --abort'.
+EOF
+
+test_expect_success 'static check of bad command' '
+	rebase_setup_and_clean bad-cmd &&
+	set_fake_editor &&
+	test_must_fail env FAKE_LINES="1 2 3 bad 4 5" \
+		git rebase -i --root 2>actual &&
+	test_cmp expect actual &&
+	FAKE_LINES="1 2 3 drop 4 5" git rebase --edit-todo &&
+	git rebase --continue &&
+	test E = $(git cat-file commit HEAD | sed -ne \$p) &&
+	test C = $(git cat-file commit HEAD^ | sed -ne \$p)
+'
+
+test_expect_success 'tabs and spaces are accepted in the todolist' '
+	rebase_setup_and_clean indented-comment &&
+	write_script add-indent.sh <<-\EOF &&
+	(
+		# Turn single spaces into space/tab mix
+		sed "1s/ /	/g; 2s/ /  /g; 3s/ / 	/g" "$1"
+		printf "\n\t# comment\n #more\n\t # comment\n"
+	) >"$1.new"
+	mv "$1.new" "$1"
+	EOF
+	test_set_editor "$(pwd)/add-indent.sh" &&
+	git rebase -i HEAD^^^ &&
+	test E = $(git cat-file commit HEAD | sed -ne \$p)
+'
+
+cat >expect <<EOF
+Warning: the SHA-1 is missing or isn't a commit in the following line:
+ - edit XXXXXXX False commit
+
+You can fix this with 'git rebase --edit-todo'.
+Or you can abort the rebase with 'git rebase --abort'.
+EOF
+
+test_expect_success 'static check of bad SHA-1' '
+	rebase_setup_and_clean bad-sha &&
+	set_fake_editor &&
+	test_must_fail env FAKE_LINES="1 2 edit fakesha 3 4 5 #" \
+		git rebase -i --root 2>actual &&
+	test_cmp expect actual &&
+	FAKE_LINES="1 2 4 5 6" git rebase --edit-todo &&
+	git rebase --continue &&
+	test E = $(git cat-file commit HEAD | sed -ne \$p)
+'
+
+test_expect_success 'editor saves as CR/LF' '
+	git checkout -b with-crlf &&
+	write_script add-crs.sh <<-\EOF &&
+	sed -e "s/\$/Q/" <"$1" | tr Q "\\015" >"$1".new &&
+	mv -f "$1".new "$1"
+	EOF
+	(
+		test_set_editor "$(pwd)/add-crs.sh" &&
+		git rebase -i HEAD^
 	)
 '
 

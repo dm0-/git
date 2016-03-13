@@ -87,6 +87,21 @@ test_expect_success 'plain nested in bare through aliased command' '
 	check_config bare-ancestor-aliased.git/plain-nested/.git false unset
 '
 
+test_expect_success 'No extra GIT_* on alias scripts' '
+	write_script script <<-\EOF &&
+	env |
+		sed -n \
+			-e "/^GIT_PREFIX=/d" \
+			-e "/^GIT_TEXTDOMAINDIR=/d" \
+			-e "/^GIT_/s/=.*//p" |
+		sort
+	EOF
+	./script >expected &&
+	git config alias.script \!./script &&
+	( mkdir sub && cd sub && git script >../actual ) &&
+	test_cmp expected actual
+'
+
 test_expect_success 'plain with GIT_WORK_TREE' '
 	mkdir plain-wt &&
 	test_must_fail env GIT_WORK_TREE="$(pwd)/plain-wt" git init plain-wt
@@ -202,8 +217,8 @@ test_expect_success 'init honors global core.sharedRepository' '
 	x$(git config -f shared-honor-global/.git/config core.sharedRepository)
 '
 
-test_expect_success 'init rejects insanely long --template' '
-	test_must_fail git init --template=$(printf "x%09999dx" 1) test
+test_expect_success 'init allows insanely long --template' '
+	git init --template=$(printf "x%09999dx" 1) test
 '
 
 test_expect_success 'init creates a new directory' '

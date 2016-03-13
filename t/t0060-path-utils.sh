@@ -19,6 +19,14 @@ relative_path() {
 	"test \"\$(test-path-utils relative_path '$1' '$2')\" = '$expected'"
 }
 
+test_git_path() {
+	test_expect_success "git-path $1 $2 => $3" "
+		$1 git rev-parse --git-path $2 >actual &&
+		echo $3 >expect &&
+		test_cmp expect actual
+	"
+}
+
 # On Windows, we are using MSYS's bash, which mangles the paths.
 # Absolute paths are anchored at the MSYS installation directory,
 # which means that the path / accounts for this many characters:
@@ -28,12 +36,21 @@ if test $rootoff = 2; then
 	rootoff=	# we are on Unix
 else
 	rootoff=$(($rootoff-1))
+	# In MSYS2, the root directory "/" is translated into a Windows
+	# directory *with* trailing slash. Let's test for that and adjust
+	# our expected longest ancestor length accordingly.
+	case "$(test-path-utils print_path /)" in
+	*/) rootslash=1;;
+	*) rootslash=0;;
+	esac
 fi
 
 ancestor() {
 	# We do some math with the expected ancestor length.
 	expected=$3
 	if test -n "$rootoff" && test "x$expected" != x-1; then
+		expected=$(($expected-$rootslash))
+		test $expected -lt 0 ||
 		expected=$(($expected+$rootoff))
 	fi
 	test_expect_success "longest ancestor: $1 $2 => $expected" \
@@ -50,6 +67,9 @@ case $(uname -s) in
 	test_set_prereq POSIX
 	;;
 esac
+
+test_expect_success basename 'test-path-utils basename'
+test_expect_success dirname 'test-path-utils dirname'
 
 norm_path "" ""
 norm_path . ""
@@ -243,5 +263,39 @@ relative_path "<empty>"		"<null>"	./
 relative_path "<null>"		"<empty>"	./
 relative_path "<null>"		"<null>"	./
 relative_path "<null>"		/foo/a/b	./
+
+test_git_path A=B                info/grafts .git/info/grafts
+test_git_path GIT_GRAFT_FILE=foo info/grafts foo
+test_git_path GIT_GRAFT_FILE=foo info/////grafts foo
+test_git_path GIT_INDEX_FILE=foo index foo
+test_git_path GIT_INDEX_FILE=foo index/foo .git/index/foo
+test_git_path GIT_INDEX_FILE=foo index2 .git/index2
+test_expect_success 'setup fake objects directory foo' 'mkdir foo'
+test_git_path GIT_OBJECT_DIRECTORY=foo objects foo
+test_git_path GIT_OBJECT_DIRECTORY=foo objects/foo foo/foo
+test_git_path GIT_OBJECT_DIRECTORY=foo objects2 .git/objects2
+test_expect_success 'setup common repository' 'git --git-dir=bar init'
+test_git_path GIT_COMMON_DIR=bar index                    .git/index
+test_git_path GIT_COMMON_DIR=bar HEAD                     .git/HEAD
+test_git_path GIT_COMMON_DIR=bar logs/HEAD                .git/logs/HEAD
+test_git_path GIT_COMMON_DIR=bar logs/refs/bisect/foo     .git/logs/refs/bisect/foo
+test_git_path GIT_COMMON_DIR=bar logs/refs/bisec/foo      bar/logs/refs/bisec/foo
+test_git_path GIT_COMMON_DIR=bar logs/refs/bisec          bar/logs/refs/bisec
+test_git_path GIT_COMMON_DIR=bar logs/refs/bisectfoo      bar/logs/refs/bisectfoo
+test_git_path GIT_COMMON_DIR=bar objects                  bar/objects
+test_git_path GIT_COMMON_DIR=bar objects/bar              bar/objects/bar
+test_git_path GIT_COMMON_DIR=bar info/exclude             bar/info/exclude
+test_git_path GIT_COMMON_DIR=bar info/grafts              bar/info/grafts
+test_git_path GIT_COMMON_DIR=bar info/sparse-checkout     .git/info/sparse-checkout
+test_git_path GIT_COMMON_DIR=bar info//sparse-checkout    .git/info//sparse-checkout
+test_git_path GIT_COMMON_DIR=bar remotes/bar              bar/remotes/bar
+test_git_path GIT_COMMON_DIR=bar branches/bar             bar/branches/bar
+test_git_path GIT_COMMON_DIR=bar logs/refs/heads/master   bar/logs/refs/heads/master
+test_git_path GIT_COMMON_DIR=bar refs/heads/master        bar/refs/heads/master
+test_git_path GIT_COMMON_DIR=bar refs/bisect/foo          .git/refs/bisect/foo
+test_git_path GIT_COMMON_DIR=bar hooks/me                 bar/hooks/me
+test_git_path GIT_COMMON_DIR=bar config                   bar/config
+test_git_path GIT_COMMON_DIR=bar packed-refs              bar/packed-refs
+test_git_path GIT_COMMON_DIR=bar shallow                  bar/shallow
 
 test_done
