@@ -399,7 +399,7 @@ static void add_rfc2047(struct strbuf *sb, const char *line, size_t len,
 }
 
 const char *show_ident_date(const struct ident_split *ident,
-			    enum date_mode mode)
+			    const struct date_mode *mode)
 {
 	unsigned long date = 0;
 	long tz = 0;
@@ -489,15 +489,15 @@ void pp_user_info(struct pretty_print_context *pp,
 	switch (pp->fmt) {
 	case CMIT_FMT_MEDIUM:
 		strbuf_addf(sb, "Date:   %s\n",
-			    show_ident_date(&ident, pp->date_mode));
+			    show_ident_date(&ident, &pp->date_mode));
 		break;
 	case CMIT_FMT_EMAIL:
 		strbuf_addf(sb, "Date: %s\n",
-			    show_ident_date(&ident, DATE_RFC2822));
+			    show_ident_date(&ident, DATE_MODE(RFC2822)));
 		break;
 	case CMIT_FMT_FULLER:
 		strbuf_addf(sb, "%sDate: %s\n", what,
-			    show_ident_date(&ident, pp->date_mode));
+			    show_ident_date(&ident, &pp->date_mode));
 		break;
 	default:
 		/* notin' */
@@ -543,9 +543,9 @@ static void add_merge_info(const struct pretty_print_context *pp,
 		struct commit *p = parent->item;
 		const char *hex = NULL;
 		if (pp->abbrev)
-			hex = find_unique_abbrev(p->object.sha1, pp->abbrev);
+			hex = find_unique_abbrev(p->object.oid.hash, pp->abbrev);
 		if (!hex)
-			hex = sha1_to_hex(p->object.sha1);
+			hex = oid_to_hex(&p->object.oid);
 		parent = parent->next;
 
 		strbuf_addf(sb, " %s", hex);
@@ -567,7 +567,7 @@ static char *replace_encoding_header(char *buf, const char *encoding)
 	char *cp = buf;
 
 	/* guess if there is an encoding header before a \n\n */
-	while (strncmp(cp, "encoding ", strlen("encoding "))) {
+	while (!starts_with(cp, "encoding ")) {
 		cp = strchr(cp, '\n');
 		if (!cp || *++cp == '\n')
 			return buf;
@@ -671,7 +671,8 @@ static int mailmap_name(const char **email, size_t *email_len,
 }
 
 static size_t format_person_part(struct strbuf *sb, char part,
-				 const char *msg, int len, enum date_mode dmode)
+				 const char *msg, int len,
+				 const struct date_mode *dmode)
 {
 	/* currently all placeholders have same length */
 	const int placeholder_len = 2;
@@ -711,16 +712,16 @@ static size_t format_person_part(struct strbuf *sb, char part,
 		strbuf_addstr(sb, show_ident_date(&s, dmode));
 		return placeholder_len;
 	case 'D':	/* date, RFC2822 style */
-		strbuf_addstr(sb, show_ident_date(&s, DATE_RFC2822));
+		strbuf_addstr(sb, show_ident_date(&s, DATE_MODE(RFC2822)));
 		return placeholder_len;
 	case 'r':	/* date, relative */
-		strbuf_addstr(sb, show_ident_date(&s, DATE_RELATIVE));
+		strbuf_addstr(sb, show_ident_date(&s, DATE_MODE(RELATIVE)));
 		return placeholder_len;
 	case 'i':	/* date, ISO 8601-like */
-		strbuf_addstr(sb, show_ident_date(&s, DATE_ISO8601));
+		strbuf_addstr(sb, show_ident_date(&s, DATE_MODE(ISO8601)));
 		return placeholder_len;
 	case 'I':	/* date, ISO 8601 strict */
-		strbuf_addstr(sb, show_ident_date(&s, DATE_ISO8601_STRICT));
+		strbuf_addstr(sb, show_ident_date(&s, DATE_MODE(ISO8601_STRICT)));
 		return placeholder_len;
 	}
 
@@ -933,7 +934,7 @@ static void rewrap_message_tail(struct strbuf *sb,
 static int format_reflog_person(struct strbuf *sb,
 				char part,
 				struct reflog_walk_info *log,
-				enum date_mode dmode)
+				const struct date_mode *dmode)
 {
 	const char *ident;
 
@@ -1118,12 +1119,12 @@ static size_t format_commit_one(struct strbuf *sb, /* in UTF-8 */
 
 	/* these depend on the commit */
 	if (!commit->object.parsed)
-		parse_object(commit->object.sha1);
+		parse_object(commit->object.oid.hash);
 
 	switch (placeholder[0]) {
 	case 'H':		/* commit hash */
 		strbuf_addstr(sb, diff_get_color(c->auto_color, DIFF_COMMIT));
-		strbuf_addstr(sb, sha1_to_hex(commit->object.sha1));
+		strbuf_addstr(sb, oid_to_hex(&commit->object.oid));
 		strbuf_addstr(sb, diff_get_color(c->auto_color, DIFF_RESET));
 		return 1;
 	case 'h':		/* abbreviated commit hash */
@@ -1132,18 +1133,18 @@ static size_t format_commit_one(struct strbuf *sb, /* in UTF-8 */
 			strbuf_addstr(sb, diff_get_color(c->auto_color, DIFF_RESET));
 			return 1;
 		}
-		strbuf_addstr(sb, find_unique_abbrev(commit->object.sha1,
+		strbuf_addstr(sb, find_unique_abbrev(commit->object.oid.hash,
 						     c->pretty_ctx->abbrev));
 		strbuf_addstr(sb, diff_get_color(c->auto_color, DIFF_RESET));
 		c->abbrev_commit_hash.len = sb->len - c->abbrev_commit_hash.off;
 		return 1;
 	case 'T':		/* tree hash */
-		strbuf_addstr(sb, sha1_to_hex(commit->tree->object.sha1));
+		strbuf_addstr(sb, oid_to_hex(&commit->tree->object.oid));
 		return 1;
 	case 't':		/* abbreviated tree hash */
 		if (add_again(sb, &c->abbrev_tree_hash))
 			return 1;
-		strbuf_addstr(sb, find_unique_abbrev(commit->tree->object.sha1,
+		strbuf_addstr(sb, find_unique_abbrev(commit->tree->object.oid.hash,
 						     c->pretty_ctx->abbrev));
 		c->abbrev_tree_hash.len = sb->len - c->abbrev_tree_hash.off;
 		return 1;
@@ -1151,7 +1152,7 @@ static size_t format_commit_one(struct strbuf *sb, /* in UTF-8 */
 		for (p = commit->parents; p; p = p->next) {
 			if (p != commit->parents)
 				strbuf_addch(sb, ' ');
-			strbuf_addstr(sb, sha1_to_hex(p->item->object.sha1));
+			strbuf_addstr(sb, oid_to_hex(&p->item->object.oid));
 		}
 		return 1;
 	case 'p':		/* abbreviated parent hashes */
@@ -1161,7 +1162,7 @@ static size_t format_commit_one(struct strbuf *sb, /* in UTF-8 */
 			if (p != commit->parents)
 				strbuf_addch(sb, ' ');
 			strbuf_addstr(sb, find_unique_abbrev(
-					p->item->object.sha1,
+					p->item->object.oid.hash,
 					c->pretty_ctx->abbrev));
 		}
 		c->abbrev_parent_hashes.len = sb->len -
@@ -1185,7 +1186,7 @@ static size_t format_commit_one(struct strbuf *sb, /* in UTF-8 */
 			if (c->pretty_ctx->reflog_info)
 				get_reflog_selector(sb,
 						    c->pretty_ctx->reflog_info,
-						    c->pretty_ctx->date_mode,
+						    &c->pretty_ctx->date_mode,
 						    c->pretty_ctx->date_mode_explicit,
 						    (placeholder[1] == 'd'));
 			return 2;
@@ -1200,7 +1201,7 @@ static size_t format_commit_one(struct strbuf *sb, /* in UTF-8 */
 			return format_reflog_person(sb,
 						    placeholder[1],
 						    c->pretty_ctx->reflog_info,
-						    c->pretty_ctx->date_mode);
+						    &c->pretty_ctx->date_mode);
 		}
 		return 0;	/* unknown %g placeholder */
 	case 'N':
@@ -1251,11 +1252,11 @@ static size_t format_commit_one(struct strbuf *sb, /* in UTF-8 */
 	case 'a':	/* author ... */
 		return format_person_part(sb, placeholder[1],
 				   msg + c->author.off, c->author.len,
-				   c->pretty_ctx->date_mode);
+				   &c->pretty_ctx->date_mode);
 	case 'c':	/* committer ... */
 		return format_person_part(sb, placeholder[1],
 				   msg + c->committer.off, c->committer.len,
-				   c->pretty_ctx->date_mode);
+				   &c->pretty_ctx->date_mode);
 	case 'e':	/* encoding */
 		if (c->commit_encoding)
 			strbuf_addstr(sb, c->commit_encoding);

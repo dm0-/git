@@ -23,6 +23,7 @@ static HANDLE hthread, hread, hwrite;
 static HANDLE hconsole1, hconsole2;
 
 #ifdef __MINGW32__
+#if !defined(__MINGW64_VERSION_MAJOR) || __MINGW64_VERSION_MAJOR < 5
 typedef struct _CONSOLE_FONT_INFOEX {
 	ULONG cbSize;
 	DWORD nFont;
@@ -31,6 +32,7 @@ typedef struct _CONSOLE_FONT_INFOEX {
 	UINT FontWeight;
 	WCHAR FaceName[LF_FACESIZE];
 } CONSOLE_FONT_INFOEX, *PCONSOLE_FONT_INFOEX;
+#endif
 #endif
 
 typedef BOOL (WINAPI *PGETCURRENTCONSOLEFONTEX)(HANDLE, BOOL,
@@ -452,7 +454,8 @@ static HANDLE duplicate_handle(HANDLE hnd)
 	HANDLE hresult, hproc = GetCurrentProcess();
 	if (!DuplicateHandle(hproc, hnd, hproc, &hresult, 0, TRUE,
 			DUPLICATE_SAME_ACCESS))
-		die_lasterr("DuplicateHandle(%li) failed", (long) hnd);
+		die_lasterr("DuplicateHandle(%li) failed",
+			(long) (intptr_t) hnd);
 	return hresult;
 }
 
@@ -539,7 +542,7 @@ void winansi_init(void)
 		return;
 
 	/* create a named pipe to communicate with the console thread */
-	sprintf(name, "\\\\.\\pipe\\winansi%lu", GetCurrentProcessId());
+	xsnprintf(name, sizeof(name), "\\\\.\\pipe\\winansi%lu", GetCurrentProcessId());
 	hwrite = CreateNamedPipe(name, PIPE_ACCESS_OUTBOUND,
 		PIPE_TYPE_BYTE | PIPE_WAIT, 1, BUFFER_SIZE, 0, 0, NULL);
 	if (hwrite == INVALID_HANDLE_VALUE)
